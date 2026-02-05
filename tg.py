@@ -7,7 +7,7 @@ import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
 # 1. Настройки и инициализация
-BOT_TOKEN = "8252236350:AAGMnnKh1zVZOpd0Ewu5SemJ6973xx0__yw"
+BOT_TOKEN = "BOT_TOKEN"
 bot = telebot.TeleBot(BOT_TOKEN)
 DB_FILE = "users.json"
 last_sent_date = None 
@@ -127,4 +127,5 @@ if __name__ == "__main__":
     checker_thread.start()
     
     print(f"✅ Бот запущен! База загружена. Пользователей: {len(user_notifications)}")
+
     bot.infinity_polling()
