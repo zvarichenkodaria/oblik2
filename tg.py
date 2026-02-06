@@ -5,6 +5,8 @@ import os
 from datetime import date, datetime
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from telebot import apihelper
+import pytz
 
 # 1. Настройки и инициализация
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -12,9 +14,11 @@ bot = telebot.TeleBot(BOT_TOKEN)
 DB_FILE = "users.json"
 last_sent_date = None 
 
-# 2. Список именинников
+# Увеличиваем глобальный тайм-аут для запросов
+apihelper.READ_TIMEOUT = 60 
+
+# --- (Список BIRTHDAYS и функции загрузки/сохранения JSON без изменений) ---
 BIRTHDAYS = [
-    (8, 2, "Тестовый Именинник"),
     (7, 1, "Владимир Бурмистров"),
     (26, 1, "Василий Попов"), 
     (29, 1, "Татьяна Шабалина"),
@@ -30,7 +34,6 @@ BIRTHDAYS = [
     (2, 11, "Светлана Шонорова"), 
 ]
 
-# 3. Функции работы с базой данных (JSON)
 def load_users():
     if os.path.exists(DB_FILE):
         try:
@@ -44,12 +47,9 @@ def save_users(users):
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(users, f, ensure_ascii=False, indent=4)
 
-# Загружаем пользователей сразу при старте
 user_notifications = load_users()
 
-# 4. Вспомогательные функции для интерфейса
 def get_keyboard(chat_id):
-    # Превращаем chat_id в строку, так как в JSON ключи всегда строки
     cid = str(chat_id)
     if user_notifications.get(cid, False):
         markup = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -68,78 +68,92 @@ def days_until(day: int, month: int, today: date) -> int:
         target = target.replace(year=year + 1)
     return (target - today).days
 
-# 5. Обработка сообщений
+# 5. Обработка сообщений (Добавлена обработка ошибок внутри)
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
-    text = message.text.strip().lower() # Здесь всё превращается в мелкий шрифт
-    chat_id = str(message.chat.id)
-    user_first_name = message.from_user.first_name or "коллега"
+    try:
+        text = message.text.strip().lower()
+        chat_id = str(message.chat.id)
+        user_first_name = message.from_user.first_name or "коллега"
 
-    if text == "уведомление":
-        user_notifications[chat_id] = True
-        save_users(user_notifications)
-        msg = (f"Добрый день, {user_first_name}! Уведомления включены.\n"
-               "Рассылка работает ежедневно в 08:00.")
-        bot.reply_to(message, msg, reply_markup=get_keyboard(chat_id))
-    
-    # Сравниваем с маленькой буквой!
-    elif text == "полный список дней рождений":
-        if user_notifications.get(chat_id, False):
-            lines = [f"{d:02d}.{m:02d} – {name}" for d, m, name in BIRTHDAYS]
-            bot.reply_to(message, "Полный список:\n" + "\n".join(lines), 
-                        reply_markup=get_keyboard(chat_id))
-    
-    # Сравниваем с маленькой буквой!
-    elif text == "выкл уведомления":
-        user_notifications[chat_id] = False
-        save_users(user_notifications)
-        bot.reply_to(message, 
-                     "Вы выключили уведомления. Напишите «Уведомление» для включения.",
-                     reply_markup=ReplyKeyboardRemove())
+        if text == "уведомление":
+            user_notifications[chat_id] = True
+            save_users(user_notifications)
+            msg = (f"Добрый день, {user_first_name}! Уведомления включены.\n"
+                   "Рассылка работает ежедневно в 08:00.")
+            bot.reply_to(message, msg, reply_markup=get_keyboard(chat_id))
+        
+        elif text == "полный список дней рождений":
+            if user_notifications.get(chat_id, False):
+                lines = [f"{d:02d}.{m:02d} – {name}" for d, m, name in BIRTHDAYS]
+                bot.reply_to(message, "Полный список:\n" + "\n".join(lines), 
+                            reply_markup=get_keyboard(chat_id))
+        
+        elif text == "выкл уведомления":
+            user_notifications[chat_id] = False
+            save_users(user_notifications)
+            bot.reply_to(message, 
+                         "Вы выключили уведомления. Напишите «Уведомление» для включения.",
+                         reply_markup=ReplyKeyboardRemove())
+    except Exception as e:
+        print(f"Ошибка в обработчике сообщений: {e}")
 
-# 6. Фоновая проверка дат (каждые 30 секунд)
+# 6. Фоновая проверка дат (Добавлен try-except для стабильности)
 def check_birthdays():
     global last_sent_date
+    # Явно задаем московский часовой пояс
+    moscow_tz = pytz.timezone('Europe/Moscow')
+    
     while True:
-        now = datetime.now() # Если на компе ЕКБ, то это время ЕКБ
-        today = date.today()
-        
-        # Проверка времени (здесь твои тестовые 18:19 или боевые 08:00)
-        if now.hour == 6 and now.minute == 0 and last_sent_date != str(today):
-            print(f"[{now.strftime('%H:%M:%S')}] Старт рассылки...")
+        try:
+            # Получаем время сервера и переводим его в МСК
+            now_moscow = datetime.now(moscow_tz)
+            today = now_moscow.date()
             
-            for d, m, name in BIRTHDAYS:
-                diff = days_until(d, m, today)
+            # Для отладки: выводит в логи хостинга точное время, которое видит бот
+            # print(f"DEBUG: Текущее время МСК: {now_moscow.strftime('%H:%M:%S')}")
+
+            # Проверяем часы и минуты по Москве
+            if now_moscow.hour == 06 and now_moscow.minute == 0 and last_sent_date != str(today):
+                print(f"[{now_moscow.strftime('%H:%M:%S')}] Запуск рассылки...")
                 
-                text = None
-                if diff == 5:
-                    text = f"📅 Через 5 дней (то есть {d:02d}.{m:02d}) {name} празднует день рождения. Пора планировать подарок! 🎁"
-                elif diff == 1:
-                    text = f"⏰ Внимание! Уже ЗАВТРА ({d:02d}.{m:02d}) {name} празднует день рождения. Не забудьте поздравить! 🎉"
+                # Копия списка пользователей для безопасного обхода
+                current_users = list(user_notifications.items())
+                
+                for d, m, name in BIRTHDAYS:
+                    diff = days_until(d, m, today)
+                    text = None
+                    if diff == 5:
+                        text = f"📅 Через 5 дней ({d:02d}.{m:02d}) {name} празднует день рождения. Пора планировать подарок! 🎁"
+                    elif diff == 1:
+                        text = f"⏰ Внимание! ЗАВТРА ({d:02d}.{m:02d}) {name} празднует день рождения. Не забудьте поздравить! 🎉"
 
-                # Если текст сформирован (т.е. выпало 1 или 5 дней), отправляем
-                if text:
-                    for chat_id, enabled in user_notifications.items():
-                        if enabled:
-                            try:
-                                bot.send_message(chat_id, text)
-                                print(f"📤 Отправлено для {chat_id} ({name})")
-                            except Exception as e:
-                                print(f"❌ Ошибка отправки {chat_id}: {e}")
+                    if text:
+                        for chat_id, enabled in current_users:
+                            if enabled:
+                                try:
+                                    bot.send_message(chat_id, text)
+                                    time.sleep(0.1)
+                                except Exception as send_error:
+                                    print(f"Ошибка отправки для {chat_id}: {send_error}")
+                
+                last_sent_date = str(today)
+                
+        except Exception as e:
+            print(f"Ошибка в цикле проверки: {e}")
             
-            last_sent_date = str(today)
-            
-        time.sleep(30)
+        time.sleep(30) # Проверка каждые 30 секунд
 
-# 7. Запуск
+# 7. Запуск с защитой от вылета
 if __name__ == "__main__":
-    # Запускаем поток-чекер
     checker_thread = threading.Thread(target=check_birthdays, daemon=True)
     checker_thread.start()
     
-    print(f"✅ Бот запущен! База загружена. Пользователей: {len(user_notifications)}")
+    print(f"✅ Бот запущен! Пользователей в базе: {len(user_notifications)}")
 
-    bot.infinity_polling()
-
-
-
+    # Параметры для предотвращения ReadTimeout
+    bot.infinity_polling(
+        timeout=90, 
+        long_polling_timeout=5,
+        logger_level=None # Можно поставить logging.DEBUG для отладки
+    )
