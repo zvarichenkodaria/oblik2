@@ -80,7 +80,7 @@ def handle_message(message):
             user_notifications[chat_id] = True
             save_users(user_notifications)
             msg = (f"Добрый день, {user_first_name}! Уведомления включены.\n"
-                   "Рассылка работает ежедневно в 08:00.")
+                   "Напоминание будет приходить за 5 дней и за 1 день до праздника в 08:00 по Екатеринбургу.")
             bot.reply_to(message, msg, reply_markup=get_keyboard(chat_id))
         
         elif text == "полный список дней рождений":
