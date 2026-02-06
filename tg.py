@@ -114,7 +114,7 @@ def check_birthdays():
             # print(f"DEBUG: Текущее время МСК: {now_moscow.strftime('%H:%M:%S')}")
 
             # Проверяем часы и минуты по Москве
-            if now_moscow.hour == 06 and now_moscow.minute == 0 and last_sent_date != str(today):
+            if now_moscow.hour == 6 and now_moscow.minute == 0 and last_sent_date != str(today):
                 print(f"[{now_moscow.strftime('%H:%M:%S')}] Запуск рассылки...")
                 
                 # Копия списка пользователей для безопасного обхода
@@ -157,3 +157,4 @@ if __name__ == "__main__":
         long_polling_timeout=5,
         logger_level=None # Можно поставить logging.DEBUG для отладки
     )
+
